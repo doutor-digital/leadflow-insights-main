@@ -5,8 +5,9 @@ import { CLINIC_ID } from "@/lib/config";
 /** Lista de leads: com `VITE_CLINIC_ID` usa consultas por clínica; senão lista global. */
 export function useLeadsList() {
   return useQuery({
-    queryKey: ["leads", "all", CLINIC_ID || "no-clinic"],
-    queryFn: () => webhooksApi.getAll(),
+    queryKey: ["leads", CLINIC_ID || "all"],
+    queryFn: () =>
+      CLINIC_ID ? webhooksApi.getConsultas(CLINIC_ID) : webhooksApi.getAll(),
     staleTime: 30_000,
   });
 }
