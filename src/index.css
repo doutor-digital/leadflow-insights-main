@@ -1,0 +1,90 @@
+@import url('https://fonts.googleapis.com/css2?family=Signika:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-body: "Signika", "Myriad Pro", "Arial", sans-serif;
+
+    --background: 0 0% 97%;
+    --foreground: 0 0% 20%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 20%;
+
+    --primary: 210 78% 42%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 20% 94%;
+    --secondary-foreground: 210 15% 30%;
+
+    --muted: 210 15% 94%;
+    --muted-foreground: 0 0% 47%;
+
+    --accent: 160 55% 42%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 210 15% 90%;
+    --input: 210 15% 90%;
+    --ring: 210 78% 42%;
+
+    --radius: 0.75rem;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --success: 160 55% 42%;
+    --success-foreground: 0 0% 100%;
+    --info: 210 78% 42%;
+    --info-foreground: 0 0% 100%;
+
+    --sidebar-background: 215 25% 15%;
+    --sidebar-foreground: 210 20% 85%;
+    --sidebar-primary: 210 78% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 25% 20%;
+    --sidebar-accent-foreground: 210 20% 90%;
+    --sidebar-border: 215 20% 22%;
+    --sidebar-ring: 210 78% 55%;
+    --sidebar-muted: 215 15% 35%;
+
+    --chart-1: 210 78% 42%;
+    --chart-2: 160 55% 42%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 280 60% 55%;
+    --chart-5: 0 72% 51%;
+    --chart-6: 190 70% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-size: 17px;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-body);
+    font-weight: 300;
+    line-height: 1.588em;
+    color: hsl(var(--muted-foreground));
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-body);
+    font-weight: 600;
+    color: hsl(var(--foreground));
+    line-height: 1.3;
+  }
+}
