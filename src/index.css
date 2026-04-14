@@ -79,6 +79,11 @@
     font-weight: 300;
     line-height: 1.588em;
     color: hsl(var(--muted-foreground));
+    background:
+      radial-gradient(circle at top left, rgba(255, 255, 255, 0.95), rgba(255, 241, 230, 0.85) 24%, transparent 48%),
+      radial-gradient(circle at top right, rgba(219, 234, 254, 0.9), transparent 34%),
+      linear-gradient(180deg, rgba(255, 248, 243, 0.94), rgba(244, 247, 251, 1));
+    min-height: 100vh;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -86,5 +91,12 @@
     font-weight: 600;
     color: hsl(var(--foreground));
     line-height: 1.3;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply backdrop-blur-xl;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.78));
   }
 }
