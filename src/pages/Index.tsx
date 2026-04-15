@@ -22,7 +22,7 @@ import {
   useOrigemCloudia,
   useAttendantRanking,
 } from "@/hooks/useDashboard";
-import { useLeadsSemPagamento, useLeadsComPagamento } from "@/hooks/useLeads";
+import { useLeadsSemPagamento, useLeadsComPagamento, useLeads } from "@/hooks/useLeads";
 import { useUnits } from "@/hooks/useUnits";
 
 const COLORS = [
@@ -62,6 +62,8 @@ export default function Dashboard() {
   const { data: semPag } = useLeadsSemPagamento(clinicId);
   const { data: comPag } = useLeadsComPagamento(clinicId);
   const { data: units } = useUnits();
+  const { data: leads, isPending, isError } = useLeads();
+
 
   const countQueries = useQueries({
     queries: (units ?? []).map((u) => ({
@@ -215,9 +217,15 @@ export default function Dashboard() {
           ))
         ) : (
           <>
-            <KpiCard
-              title="Total Leads"
-              value={formatNumberBR(dash?.totalLeads ?? 0)}
+           <KpiCard
+              title="Total de Leads"
+              value={formatNumberBR(leads?.length ?? 0)}
+              change={`${formatNumberBR(
+                leads?.filter((l: { createdAt: string | number | Date; }) => {
+                  const d = new Date(l.createdAt);
+                  return Date.now() - d.getTime() < 7 * 24 * 60 * 60 * 1000;
+                }).length ?? 0
+              )} chegaram nos últimos 7 dias`}
               changeType="neutral"
               icon={Users}
             />
