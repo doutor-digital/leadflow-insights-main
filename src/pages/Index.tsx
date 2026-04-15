@@ -24,6 +24,7 @@ import {
 } from "@/hooks/useDashboard";
 import { useLeadsSemPagamento, useLeadsComPagamento, useLeads } from "@/hooks/useLeads";
 import { useUnits } from "@/hooks/useUnits";
+import { FunnelCustom } from "@/components/FunnelCustom";
 
 const COLORS = [
   "hsl(210, 78%, 42%)",
@@ -265,20 +266,16 @@ export default function Dashboard() {
 
       {/* Row 1: Funnel + Line */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <ChartCard title="Funil de Leads" description="Etapas do lead desde a entrada até conversão">
-          {funnelData.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">Sem dados de etapas.</p>
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <FunnelChart>
-                <Tooltip />
-                <Funnel dataKey="value" data={funnelData} isAnimationActive>
-                  <LabelList position="right" fill="hsl(0,0%,20%)" stroke="none" dataKey="name" fontSize={12} />
-                </Funnel>
-              </FunnelChart>
-            </ResponsiveContainer>
-          )}
-        </ChartCard>
+      <ChartCard title="Funil de Leads" description="Etapas desde a entrada até a conversão">
+        {funnelData.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-10 text-center">
+            Sem dados de etapas.
+          </p>
+        ) : (
+          <FunnelCustom data={funnelData} />
+        )}
+      </ChartCard>
+
 
         <ChartCard title="Evolução Diária" description="Leads novos vs convertidos (período da API)">
           {lineData.length === 0 ? (
