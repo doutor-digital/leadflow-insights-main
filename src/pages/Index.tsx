@@ -1,557 +1,459 @@
 import { useMemo } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { AppLayout } from "@/components/AppLayout";
-import { ChartCard, KpiCard } from "@/components/DashboardCards";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useLeads } from "@/hooks/useLeads";
-import { formatDateBR, formatNumberBR, formatTaxaPct } from "@/lib/format";
-import type { Lead } from "@/api/types";
+import { KpiCard, ChartCard } from "@/components/DashboardCards";
+import { Users, UserCheck, Clock, AlertTriangle, TrendingUp, PhoneCall } from "lucide-react";
 import {
-  Users,
-  TrendingUp,
-  Clock3,
-  Sparkles,
-  Activity,
-  CircleDot,
-  ArrowRight,
-} from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  CartesianGrid,
-  Cell,
-  Funnel,
-  FunnelChart,
-  LabelList,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
+  AreaChart, Area, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  FunnelChart, Funnel, LabelList,
 } from "recharts";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { CLINIC_ID } from "@/lib/config";
+import { formatDiaChart, formatNumberBR, formatTaxaPct } from "@/lib/format";
+import { webhooksApi } from "@/api/endpoints/webhooks";
+import { analyticsApi } from "@/api/endpoints/analytics";
+import type { LeadCountByState, Unit } from "@/api/types";
+import {
+  useDashboardMetrics,
+  useEtapaAgrupada,
+  useOrigemCloudia,
+  useAttendantRanking,
+} from "@/hooks/useDashboard";
+import { useLeadsSemPagamento, useLeadsComPagamento } from "@/hooks/useLeads";
+import { useUnits } from "@/hooks/useUnits";
 
 const COLORS = [
-  "hsl(14 90% 56%)",
-  "hsl(198 79% 45%)",
-  "hsl(160 63% 36%)",
-  "hsl(42 96% 55%)",
-  "hsl(340 72% 52%)",
-  "hsl(262 58% 57%)",
+  "hsl(210, 78%, 42%)",
+  "hsl(160, 55%, 42%)",
+  "hsl(38, 92%, 50%)",
+  "hsl(280, 60%, 55%)",
+  "hsl(0, 72%, 51%)",
+  "hsl(190, 70%, 45%)",
 ];
 
-const CONVERTED_STATES = ["convertido", "concluido", "fechado", "ganho", "vendido"];
-const ACTIVE_STATES = ["fila", "em atendimento", "atendimento", "aguardando", "novo", "bot"];
-
-function normalizeText(value?: string | null) {
-  return value?.trim().toLowerCase() ?? "";
-}
-
-function startOfDay(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
-}
-
-function isRecentDays(dateString: string, days: number) {
-  const date = new Date(dateString);
-  if (Number.isNaN(date.getTime())) return false;
-  const now = startOfDay(new Date());
-  const diff = now.getTime() - startOfDay(date).getTime();
-  return diff >= 0 && diff <= days * 24 * 60 * 60 * 1000;
-}
-
-function buildDailyData(leads: Lead[], days: number) {
-  const today = startOfDay(new Date());
-  const buckets = Array.from({ length: days }, (_, index) => {
-    const day = new Date(today);
-    day.setDate(today.getDate() - (days - index - 1));
-    const key = day.toISOString().slice(0, 10);
-    return {
-      key,
-      dia: day.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
-      leads: 0,
-      convertidos: 0,
-    };
+function buildStackedRows(
+  units: Unit[],
+  results: LeadCountByState[][]
+): Record<string, string | number>[] {
+  const stateSet = new Set<string>();
+  results.forEach((rows) => rows.forEach(({ state }) => stateSet.add(state)));
+  const estados = Array.from(stateSet);
+  return estados.map((estado) => {
+    const row: Record<string, string | number> = { estado };
+    units.forEach((u, i) => {
+      const key = `u_${u.id}`;
+      row[key] = results[i]?.find((x) => x.state === estado)?.count ?? 0;
+    });
+    return row;
   });
-
-  const bucketByKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
-  leads.forEach((lead) => {
-    const createdAt = new Date(lead.createdAt);
-    if (Number.isNaN(createdAt.getTime())) return;
-    const createdKey = createdAt.toISOString().slice(0, 10);
-    if (createdKey && bucketByKey.has(createdKey)) {
-      bucketByKey.get(createdKey)!.leads += 1;
-      if (CONVERTED_STATES.some((state) => normalizeText(lead.estado).includes(state))) {
-        bucketByKey.get(createdKey)!.convertidos += 1;
-      }
-    }
-  });
-
-  return buckets;
-}
-
-function sortByCountDesc<T extends { value: number }>(rows: T[]) {
-  return [...rows].sort((a, b) => b.value - a.value);
-}
-
-function getLeadName(lead: Lead) {
-  return lead.nome?.trim() || "Lead sem nome";
-}
-
-function getBadgeClass(estado: string) {
-  const value = normalizeText(estado);
-  if (CONVERTED_STATES.some((state) => value.includes(state))) {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  if (value.includes("fila") || value.includes("aguard")) {
-    return "border-amber-200 bg-amber-50 text-amber-700";
-  }
-  if (value.includes("atendimento")) {
-    return "border-sky-200 bg-sky-50 text-sky-700";
-  }
-  return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
 export default function Dashboard() {
-  const { data: leads, isPending, isError, error } = useLeads();
+  const clinicId = CLINIC_ID;
 
-  const dashboard = useMemo(() => {
-    const list = leads ?? [];
-    const totalLeads = list.length;
-    const converted = list.filter((lead) =>
-      CONVERTED_STATES.some((state) => normalizeText(lead.estado).includes(state))
-    ).length;
-    const active = list.filter((lead) =>
-      ACTIVE_STATES.some((state) => normalizeText(lead.estado).includes(state))
-    ).length;
-    const recentLeads = list.filter((lead) => isRecentDays(lead.createdAt, 7)).length;
-    const uniqueSources = new Set(
-      list.map((lead) => lead.origem?.trim()).filter(Boolean)
-    ).size;
-    const conversionRate = totalLeads ? (converted / totalLeads) * 100 : 0;
+  const { data: dash, isPending: dashPending, isError: dashError, error: dashErr } =
+    useDashboardMetrics(clinicId);
+  const { data: etapas } = useEtapaAgrupada(clinicId);
+  const { data: origens } = useOrigemCloudia(clinicId);
+  const { data: ranking } = useAttendantRanking(clinicId);
+  const { data: semPag } = useLeadsSemPagamento(clinicId);
+  const { data: comPag } = useLeadsComPagamento(clinicId);
+  const { data: units } = useUnits();
 
-    const sourceMap = new Map<string, number>();
-    const unitMap = new Map<string, number>();
-    const stageMap = new Map<string, number>();
+  const countQueries = useQueries({
+    queries: (units ?? []).map((u) => ({
+      queryKey: ["count-by-state", u.id],
+      queryFn: () => webhooksApi.getCountByState(u.id),
+      enabled: !!clinicId && !!units?.length,
+    })),
+  });
 
-    list.forEach((lead) => {
-      const source = lead.origem?.trim() || "Sem origem";
-      const unit = lead.unidade?.trim() || "Sem unidade";
-      const stage = lead.estado?.trim() || "Sem etapa";
-      sourceMap.set(source, (sourceMap.get(source) ?? 0) + 1);
-      unitMap.set(unit, (unitMap.get(unit) ?? 0) + 1);
-      stageMap.set(stage, (stageMap.get(stage) ?? 0) + 1);
-    });
+  const pairSummaries = useQueries({
+    queries: (units ?? []).slice(0, 2).map((u) => ({
+      queryKey: ["unit-summary-dash", u.id],
+      queryFn: () => analyticsApi.getUnitSummary(u.id),
+      enabled: !!clinicId && (units?.length ?? 0) >= 1,
+    })),
+  });
 
-    const sourceData = sortByCountDesc(
-      Array.from(sourceMap.entries()).map(([name, value]) => ({ name, value }))
-    ).slice(0, 6);
+  const alertQueries = useQueries({
+    queries: (units ?? []).slice(0, 10).map((u) => ({
+      queryKey: ["unit-alerts-dash", u.id],
+      queryFn: () => analyticsApi.getUnitAlerts(u.id),
+      enabled: !!clinicId && !!units?.length,
+    })),
+  });
 
-    const unitData = sortByCountDesc(
-      Array.from(unitMap.entries()).map(([name, value]) => ({ name, value }))
-    ).slice(0, 8);
+  const funnelData = useMemo(() => {
+    if (!etapas?.length) return [];
+    return etapas.map((e, i) => ({
+      name: e.etapa,
+      value: e.quantidade,
+      fill: COLORS[i % COLORS.length],
+    }));
+  }, [etapas]);
 
-    const funnelData = sortByCountDesc(
-      Array.from(stageMap.entries()).map(([name, value], index) => ({
-        name,
-        value,
-        fill: COLORS[index % COLORS.length],
-      }))
+  const lineData = useMemo(() => {
+    if (!dash?.evolucaoDiaria?.length) return [];
+    return dash.evolucaoDiaria.map((d) => ({
+      dia: formatDiaChart(d.dia),
+      leads: d.leads,
+      convertidos: d.convertidos,
+    }));
+  }, [dash?.evolucaoDiaria]);
+
+  const stackedBarData = useMemo(() => {
+    const results = countQueries.map((q) => q.data ?? []);
+    if (!units?.length || !results.some((r) => r.length)) return [];
+    return buildStackedRows(units, results);
+  }, [units, countQueries]);
+
+  const pieData = useMemo(() => {
+    if (!origens?.length) return [];
+    return origens.map((o) => ({ name: o.origem, value: o.quantidade }));
+  }, [origens]);
+
+  const areaData = useMemo(() => {
+    if (!dash?.volumePorHora?.length) return [];
+    return dash.volumePorHora.map((v) => ({ hora: v.hora, volume: v.volume }));
+  }, [dash?.volumePorHora]);
+
+  const rankingData = useMemo(() => {
+    if (!ranking?.length) return [];
+    return [...ranking].reverse().map((r) => ({ name: r.nome, leads: r.leads }));
+  }, [ranking]);
+
+  const donutData = useMemo(() => {
+    const a = semPag?.length ?? 0;
+    const b = comPag?.length ?? 0;
+    if (a === 0 && b === 0) return [];
+    return [
+      { name: "Sem pagamento", value: a },
+      { name: "Com pagamento", value: b },
+    ];
+  }, [semPag, comPag]);
+
+  const radarData = useMemo(() => {
+    const s0 = pairSummaries[0]?.data;
+    const s1 = pairSummaries[1]?.data;
+    if (!s0 || !s1) return [];
+    const max = (a: number, b: number) => Math.max(a, b, 1);
+    return [
+      {
+        metric: "Fila",
+        A: (s0.emFila / max(s0.emFila, s1.emFila)) * 100,
+        B: (s1.emFila / max(s0.emFila, s1.emFila)) * 100,
+      },
+      {
+        metric: "Leads",
+        A: (s0.totalLeads / max(s0.totalLeads, s1.totalLeads)) * 100,
+        B: (s1.totalLeads / max(s0.totalLeads, s1.totalLeads)) * 100,
+      },
+      {
+        metric: "Convertidos",
+        A: (s0.convertidos / max(s0.convertidos, s1.convertidos)) * 100,
+        B: (s1.convertidos / max(s0.convertidos, s1.convertidos)) * 100,
+      },
+      {
+        metric: "SLA",
+        A: s0.sla,
+        B: s1.sla,
+      },
+    ];
+  }, [pairSummaries]);
+
+  const alertItems = useMemo(() => {
+    const flat = alertQueries.flatMap((q) => q.data ?? []);
+    return flat
+      .sort((a, b) => {
+        const order = { critical: 0, warning: 1, info: 2 };
+        return (order[a.nivel] ?? 3) - (order[b.nivel] ?? 3);
+      })
+      .slice(0, 8);
+  }, [alertQueries]);
+
+  if (!clinicId) {
+    return (
+      <AppLayout title="Dashboard" subtitle="Visão executiva de leads e operações">
+        <Alert>
+          <AlertTitle>Clínica não configurada</AlertTitle>
+          <AlertDescription>
+            Defina <code className="text-xs bg-muted px-1 rounded">VITE_CLINIC_ID</code> no ficheiro{" "}
+            <code className="text-xs bg-muted px-1 rounded">.env</code> e reinicie o servidor de
+            desenvolvimento.
+          </AlertDescription>
+        </Alert>
+      </AppLayout>
     );
+  }
 
-    const lineData = buildDailyData(list, 14);
+  if (dashError) {
+    return (
+      <AppLayout title="Dashboard" subtitle="Visão executiva de leads e operações">
+        <Alert variant="destructive">
+          <AlertTitle>Erro ao carregar métricas</AlertTitle>
+          <AlertDescription>
+            {(dashErr as Error)?.message ?? "Verifique a API e o CORS."}
+          </AlertDescription>
+        </Alert>
+      </AppLayout>
+    );
+  }
 
-    const latestLeads = [...list]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 6);
-
-    const topStage = funnelData[0];
-
-    return {
-      totalLeads,
-      converted,
-      active,
-      recentLeads,
-      uniqueSources,
-      conversionRate,
-      sourceData,
-      unitData,
-      funnelData,
-      lineData,
-      latestLeads,
-      topStage,
-    };
-  }, [leads]);
+  const taxa = dash?.taxaConversao ?? 0;
 
   return (
-    <AppLayout title="Funil de Leads" subtitle="Painel conectado ao endpoint /webhooks com leitura total dos leads">
-      <div className="space-y-6">
-        <section className="relative overflow-hidden rounded-[28px] border border-white/70 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.98),_rgba(255,244,232,0.9)_35%,_rgba(236,246,255,0.88)_100%)] p-6 shadow-[0_40px_120px_-48px_rgba(15,23,42,0.45)]">
-          <div className="pointer-events-none absolute inset-y-0 right-0 w-1/2 bg-[radial-gradient(circle_at_center,_rgba(249,115,22,0.18),_transparent_58%)]" />
-          <div className="relative grid gap-6 lg:grid-cols-[1.35fr_0.9fr]">
-            <div className="space-y-4">
-              <Badge className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-orange-700">
-                Dashboard principal
-              </Badge>
-              <div className="space-y-3">
-                <h2 className="max-w-2xl text-3xl font-semibold tracking-tight text-slate-900 md:text-4xl">
-                  Seu funil agora usa a rota <code>/webhooks</code> como fonte principal.
-                </h2>
-                <p className="max-w-2xl text-sm leading-6 text-slate-600 md:text-base">
-                  O total de leads, a evolução diária, as etapas, as origens e a distribuição por
-                  unidade passam a ser calculados a partir dos leads reais retornados pela sua API.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                <div className="rounded-2xl border border-white/80 bg-white/80 px-4 py-3 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Últimos 7 dias</p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">
-                    {isPending ? "--" : formatNumberBR(dashboard.recentLeads)}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/80 bg-white/80 px-4 py-3 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Canais ativos</p>
-                  <p className="mt-1 text-2xl font-semibold text-slate-900">
-                    {isPending ? "--" : formatNumberBR(dashboard.uniqueSources)}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/80 bg-white/80 px-4 py-3 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Etapa dominante</p>
-                  <p className="mt-1 text-lg font-semibold text-slate-900">
-                    {isPending ? "--" : dashboard.topStage?.name ?? "Sem etapa"}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-[26px] border border-slate-200/80 bg-slate-950 px-5 py-5 text-white shadow-[0_24px_60px_-40px_rgba(15,23,42,0.95)]">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Resumo rápido</p>
-                  <h3 className="mt-2 text-xl font-semibold text-white">Pulso do funil</h3>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-2">
-                  <Activity className="h-5 w-5 text-orange-300" />
-                </div>
-              </div>
-              <div className="mt-5 space-y-3">
-                {[
-                  ["Leads totais", formatNumberBR(dashboard.totalLeads)],
-                  ["Convertidos", formatNumberBR(dashboard.converted)],
-                  ["Em andamento", formatNumberBR(dashboard.active)],
-                  ["Taxa de conversão", formatTaxaPct(dashboard.conversionRate)],
-                ].map(([label, value]) => (
-                  <div
-                    key={label}
-                    className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
-                  >
-                    <span className="text-sm text-slate-300">{label}</span>
-                    <span className="text-lg font-semibold text-white">{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {isError && (
-          <Alert variant="destructive">
-            <AlertTitle>Erro ao carregar a API</AlertTitle>
-            <AlertDescription>
-              {(error as Error)?.message ??
-                "Não foi possível consultar /webhooks. Verifique VITE_API_BASE_URL, CORS e o token Bearer na barra lateral."}
-            </AlertDescription>
-          </Alert>
+    <AppLayout title="Dashboard" subtitle="Visão executiva de leads e operações">
+      {/* KPIs */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
+        {dashPending ? (
+          Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-[100px] rounded-lg" />
+          ))
+        ) : (
+          <>
+            <KpiCard
+              title="Total Leads"
+              value={formatNumberBR(dash?.totalLeads ?? 0)}
+              changeType="neutral"
+              icon={Users}
+            />
+            <KpiCard
+              title="Convertidos"
+              value={formatNumberBR(dash?.convertidos ?? 0)}
+              changeType="neutral"
+              icon={UserCheck}
+            />
+            <KpiCard
+              title="Em Fila"
+              value={formatNumberBR(dash?.emFila ?? 0)}
+              changeType="neutral"
+              icon={Clock}
+            />
+            <KpiCard
+              title="Alertas"
+              value={formatNumberBR(dash?.alertas ?? 0)}
+              changeType="neutral"
+              icon={AlertTriangle}
+            />
+            <KpiCard
+              title="Taxa Conversão"
+              value={formatTaxaPct(taxa)}
+              changeType="neutral"
+              icon={TrendingUp}
+            />
+            <KpiCard
+              title="Atendimentos Hoje"
+              value={formatNumberBR(dash?.atendimentosHoje ?? 0)}
+              changeType="neutral"
+              icon={PhoneCall}
+            />
+          </>
         )}
+      </div>
 
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {isPending ? (
-            Array.from({ length: 4 }).map((_, index) => (
-              <Skeleton key={index} className="h-[124px] rounded-[24px]" />
-            ))
+      {/* Row 1: Funnel + Line */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <ChartCard title="Funil de Leads" description="Etapas do lead desde a entrada até conversão">
+          {funnelData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Sem dados de etapas.</p>
           ) : (
-            <>
-              <KpiCard
-                title="Total de Leads"
-                value={formatNumberBR(leads?.length ?? 0)}
-                change={`${formatNumberBR(
-                  leads?.filter((l) => {
-                    const d = new Date(l.createdAt);
-                    return Date.now() - d.getTime() < 7 * 24 * 60 * 60 * 1000;
-                  }).length ?? 0
-                )} chegaram nos últimos 7 dias`}
-                changeType="neutral"
-                icon={Users}
-              />
-              <KpiCard
-                title="Convertidos"
-                value={formatNumberBR(dashboard.converted)}
-                change={`${formatTaxaPct(dashboard.conversionRate)} do volume total`}
-                changeType="positive"
-                icon={TrendingUp}
-              />
-              <KpiCard
-                title="Em Andamento"
-                value={formatNumberBR(dashboard.active)}
-                change="Leads ainda em fila ou atendimento"
-                changeType="neutral"
-                icon={Clock3}
-              />
-              <KpiCard
-                title="Origens Ativas"
-                value={formatNumberBR(dashboard.uniqueSources)}
-                change="Canais identificados na sua base"
-                changeType="neutral"
-                icon={Sparkles}
-              />
-            </>
+            <ResponsiveContainer width="100%" height={280}>
+              <FunnelChart>
+                <Tooltip />
+                <Funnel dataKey="value" data={funnelData} isAnimationActive>
+                  <LabelList position="right" fill="hsl(0,0%,20%)" stroke="none" dataKey="name" fontSize={12} />
+                </Funnel>
+              </FunnelChart>
+            </ResponsiveContainer>
           )}
-        </section>
+        </ChartCard>
 
-        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-          <ChartCard
-            title="Evolução recente"
-            description="Leads criados e quantos já estão em estado convertido nos últimos 14 dias"
-          >
-            {isPending ? (
-              <Skeleton className="h-[300px] w-full rounded-2xl" />
-            ) : dashboard.lineData.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                Sem dados recentes para montar a linha.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={dashboard.lineData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.25)" />
-                  <XAxis dataKey="dia" tick={{ fontSize: 12 }} stroke="rgba(100, 116, 139, 0.8)" />
-                  <YAxis tick={{ fontSize: 12 }} stroke="rgba(100, 116, 139, 0.8)" />
-                  <Tooltip />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="leads"
-                    stroke={COLORS[1]}
-                    strokeWidth={3}
-                    dot={{ r: 3 }}
-                    name="Entradas"
+        <ChartCard title="Evolução Diária" description="Leads novos vs convertidos (período da API)">
+          {lineData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Sem série temporal.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={lineData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(210,15%,90%)" />
+                <XAxis dataKey="dia" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="leads" stroke={COLORS[0]} strokeWidth={2} name="Leads" dot={false} />
+                <Line type="monotone" dataKey="convertidos" stroke={COLORS[1]} strokeWidth={2} name="Convertidos" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+      </div>
+
+      {/* Row 2: Stacked Bar + Pie */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <ChartCard title="Leads por Estado e Unidade" description="Distribuição empilhada" className="lg:col-span-2">
+          {stackedBarData.length === 0 || !units?.length ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              Sem dados por unidade ou unidades não carregadas.
+            </p>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={stackedBarData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(210,15%,90%)" />
+                <XAxis dataKey="estado" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Legend />
+                {units.map((u, i) => (
+                  <Bar
+                    key={u.id}
+                    dataKey={`u_${u.id}`}
+                    stackId="a"
+                    fill={COLORS[i % COLORS.length]}
+                    name={u.nome}
+                    radius={i === units.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
                   />
-                  <Line
-                    type="monotone"
-                    dataKey="convertidos"
-                    stroke={COLORS[2]}
-                    strokeWidth={3}
-                    dot={{ r: 3 }}
-                    name="Convertidos"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
-
-          <ChartCard title="Últimos leads" description="Os registros mais recentes recebidos pela API">
-            {isPending ? (
-              <div className="space-y-3">
-                {Array.from({ length: 5 }).map((_, index) => (
-                  <Skeleton key={index} className="h-16 w-full rounded-2xl" />
                 ))}
-              </div>
-            ) : dashboard.latestLeads.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                Nenhum lead retornado por <code>/webhooks</code>.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {dashboard.latestLeads.map((lead) => (
-                  <div
-                    key={lead.id}
-                    className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-slate-900">{getLeadName(lead)}</p>
-                      <p className="truncate text-sm text-slate-500">
-                        {lead.origem || "Sem origem"} • {lead.unidade || "Sem unidade"}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <Badge variant="outline" className={getBadgeClass(lead.estado)}>
-                        {lead.estado || "Sem etapa"}
-                      </Badge>
-                      <p className="mt-2 text-xs text-slate-500">{formatDateBR(lead.createdAt)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </ChartCard>
-        </section>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
 
-        <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <ChartCard
-            title="Funil por etapa"
-            description="Distribuição calculada diretamente pelo campo de estado do lead"
-          >
-            {isPending ? (
-              <Skeleton className="h-[320px] w-full rounded-2xl" />
-            ) : dashboard.funnelData.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                Sem etapas disponíveis para exibir o funil.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height={320}>
-                <FunnelChart>
-                  <Tooltip />
-                  <Funnel dataKey="value" data={dashboard.funnelData} isAnimationActive>
-                    <LabelList
-                      position="right"
-                      fill="hsl(222 47% 11%)"
-                      stroke="none"
-                      dataKey="name"
-                      fontSize={12}
-                    />
-                  </Funnel>
-                </FunnelChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
+        <ChartCard title="Origem dos Leads" description="Distribuição por canal">
+          {pieData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Sem origens.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={0}
+                  outerRadius={90}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  labelLine={false}
+                  fontSize={11}
+                >
+                  {pieData.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+      </div>
 
-          <ChartCard
-            title="Principais origens"
-            description="Canais que mais abastecem o funil no retorno de /webhooks"
-          >
-            {isPending ? (
-              <Skeleton className="h-[320px] w-full rounded-2xl" />
-            ) : dashboard.sourceData.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                Sem origens suficientes para o gráfico.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height={320}>
-                <PieChart>
-                  <Pie
-                    data={dashboard.sourceData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={68}
-                    outerRadius={110}
-                    dataKey="value"
-                    paddingAngle={4}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    labelLine={false}
-                    fontSize={11}
-                  >
-                    {dashboard.sourceData.map((entry, index) => (
-                      <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
-        </section>
+      {/* Row 3: Area + Donut + Ranking */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+        <ChartCard title="Volume por Hora" description="Leads recebidos ao longo do dia">
+          {areaData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Sem volume por hora.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={areaData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(210,15%,90%)" />
+                <XAxis dataKey="hora" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Area type="monotone" dataKey="volume" stroke={COLORS[5]} fill={COLORS[5]} fillOpacity={0.15} strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
 
-        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_0.9fr]">
-          <ChartCard
-            title="Leads por unidade"
-            description="Onde o volume está concentrado dentro da operação"
-          >
-            {isPending ? (
-              <Skeleton className="h-[300px] w-full rounded-2xl" />
-            ) : dashboard.unitData.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                Sem unidades identificadas nos leads.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={dashboard.unitData} layout="vertical" margin={{ left: 24 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.25)" />
-                  <XAxis type="number" tick={{ fontSize: 12 }} stroke="rgba(100, 116, 139, 0.8)" />
-                  <YAxis
-                    dataKey="name"
-                    type="category"
-                    width={112}
-                    tick={{ fontSize: 12 }}
-                    stroke="rgba(100, 116, 139, 0.8)"
-                  />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[0, 12, 12, 0]} barSize={20}>
-                    {dashboard.unitData.map((entry, index) => (
-                      <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </ChartCard>
+        <ChartCard title="Pagamento" description="Leads com vs sem pagamento (amostras da API)">
+          {donutData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Sem dados de pagamento.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie
+                  data={donutData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={55}
+                  outerRadius={85}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  fontSize={11}
+                >
+                  <Cell fill={COLORS[1]} />
+                  <Cell fill={COLORS[2]} />
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
 
-          <ChartCard
-            title="Leitura operacional"
-            description="Resumo do que o time precisa enxergar primeiro"
-          >
-            {isPending ? (
-              <div className="space-y-3">
-                {Array.from({ length: 4 }).map((_, index) => (
-                  <Skeleton key={index} className="h-20 w-full rounded-2xl" />
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {[
-                  {
-                    title: "Taxa atual",
-                    value: formatTaxaPct(dashboard.conversionRate),
-                    text: "Proporção de leads já marcados como convertidos ou concluídos.",
-                  },
-                  {
-                    title: "Em andamento",
-                    value: formatNumberBR(dashboard.active),
-                    text: "Leads ainda em fila, bot, aguardando ou atendimento.",
-                  },
-                  {
-                    title: "Canal líder",
-                    value: dashboard.sourceData[0]?.name ?? "Sem dados",
-                    text: "Origem com maior volume dentro da base retornada.",
-                  },
-                  {
-                    title: "Maior etapa",
-                    value: dashboard.topStage?.name ?? "Sem etapa",
-                    text: "Estado que hoje concentra mais leads no funil.",
-                  },
-                ].map((item) => (
-                  <div
-                    key={item.title}
-                    className="rounded-[22px] border border-slate-200/70 bg-white/85 p-4"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-slate-900">{item.title}</p>
-                        <p className="mt-1 text-sm leading-6 text-slate-500">{item.text}</p>
-                      </div>
-                      <div className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700">
-                        <CircleDot className="h-4 w-4 text-orange-500" />
-                        {item.value}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                <div className="rounded-[22px] border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
-                  <div className="flex items-center gap-2 font-medium">
-                    <ArrowRight className="h-4 w-4" />
-                    Próximo passo recomendado
-                  </div>
-                  <p className="mt-2 leading-6">
-                    Se a API responder, esse painel já mostra o volume real. O próximo ajuste ideal
-                    é alinhar os nomes de <code>estado</code> vindos do backend para medir conversão
-                    com ainda mais precisão.
-                  </p>
+        <ChartCard title="Top Atendentes" description="Ranking por leads concluídos">
+          {rankingData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Sem ranking.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={rankingData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(210,15%,90%)" />
+                <XAxis type="number" tick={{ fontSize: 12 }} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={90} />
+                <Tooltip />
+                <Bar dataKey="leads" fill={COLORS[0]} radius={[0, 4, 4, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+      </div>
+
+      {/* Row 4: Radar */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ChartCard title="Score Operacional" description="Comparativo entre as duas primeiras unidades (normalizado)">
+          {radarData.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              É necessário pelo menos duas unidades com resumo.
+            </p>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <RadarChart data={radarData}>
+                <PolarGrid stroke="hsl(210,15%,90%)" />
+                <PolarAngleAxis dataKey="metric" tick={{ fontSize: 12 }} />
+                <PolarRadiusAxis tick={{ fontSize: 10 }} />
+                <Radar name={units?.[0]?.nome ?? "A"} dataKey="A" stroke={COLORS[0]} fill={COLORS[0]} fillOpacity={0.2} />
+                <Radar name={units?.[1]?.nome ?? "B"} dataKey="B" stroke={COLORS[1]} fill={COLORS[1]} fillOpacity={0.2} />
+                <Legend />
+                <Tooltip />
+              </RadarChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+
+        <ChartCard title="Alertas Prioritários" description="Alertas por unidade (API analytics)">
+          {alertItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Nenhum alerta ativo.</p>
+          ) : (
+            <div className="space-y-3">
+              {alertItems.map((alert) => (
+                <div
+                  key={alert.id}
+                  className={`flex items-start gap-3 p-3 rounded-md text-sm ${
+                    alert.nivel === "critical"
+                      ? "bg-destructive/10 text-destructive"
+                      : alert.nivel === "warning"
+                        ? "bg-warning/10 text-warning"
+                        : "bg-info/10 text-info"
+                  }`}
+                >
+                  <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{alert.mensagem}</span>
                 </div>
-              </div>
-            )}
-          </ChartCard>
-        </section>
+              ))}
+            </div>
+          )}
+        </ChartCard>
       </div>
     </AppLayout>
   );
